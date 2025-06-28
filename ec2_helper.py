@@ -33,7 +33,7 @@ The script:
   • Defaults to us-east-1 unless you pass --region
   • Identifies “your” instance by the tag value you supply via --tag
   • Uses AWS SSM for everything (no SSH keys / security-group headaches)
-  • Schedules termination 3 h after creation with an EventBridge rule
+  • Auto-termination enforced via uptime checks during polling operations
   • Reads AWS creds from .env (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)
 
 Importing
@@ -136,11 +136,11 @@ def _find_instance(session: boto3.Session, tag: str):
 
 
 def spin_up_instance(
-    instance_type: str, tag: str, region: Optional[str] = None, key_name: Optional[str] = None, gpu: bool = False, dlami: bool = False
+    instance_type: str, tag: str, region: Optional[str] = None, key_name: Optional[str] = None, gpu: bool = False, dlami: bool = False, auto_terminate_hours: float = 3.0
 ):
     """
     Start a fresh EC2 instance (Amazon Linux 2023) and tag it.
-    Auto-terminates 3 h later via EventBridge.
+    Auto-termination is enforced via uptime checks during polling operations.
     Returns: (instance, True) - True indicates instance was created.
     """
     sess = _session(region)
@@ -175,7 +175,6 @@ def spin_up_instance(
     print(f"∙ Waiting for instance {inst.id} to be running…")
     inst.wait_until_running()
     inst.reload()
-    _schedule_termination(sess, inst.id)
 
     print(
         f"[bold cyan]Instance ready:[/] {inst.id} "
@@ -184,70 +183,12 @@ def spin_up_instance(
     return inst, True
 
 
-def _schedule_termination(session: boto3.Session, instance_id: str):
-    """
-    Create an EventBridge one-shot rule that runs the built-in
-    SSM Automation 'AWS-StopEC2Instance' 24 h from now.
-    """
-    events = session.client("events")
-    ssm = session.client("ssm")
-
-    rule_name = f"ec2-helper-terminate-{instance_id}"
-    when = datetime.now(timezone.utc) + timedelta(hours=3)
-    
-    # Use cron expression for one-time schedule instead of at()  
-    # Format: cron(min hour day month day-of-week year)
-    cron_expr = f"cron({when.minute} {when.hour} {when.day} {when.month} ? {when.year})"
-    
-    print(f"∙ Scheduling with cron: {cron_expr}")
-    events.put_rule(Name=rule_name, ScheduleExpression=cron_expr, State="ENABLED")
-
-    # SSM Automation doc target
-    target_id = "1"
-    events.put_targets(
-        Rule=rule_name,
-        Targets=[
-            {
-                "Id": target_id,
-                "Arn": f"arn:aws:ssm:{session.region_name}:{session.client('sts').get_caller_identity()['Account']}:automation-definition/AWS-StopEC2Instance:$LATEST",
-                "RoleArn": _events_service_role(session),
-                "Input": json.dumps({"InstanceId": instance_id}),
-            }
-        ],
-    )
-    print(f"∙ Auto-termination scheduled for {when.isoformat(timespec='minutes')}")
 
 
-def _events_service_role(session):
-    """
-    Get / create a service role for EventBridge to call SSM Automation.
-    Expects you have permission to create it once; otherwise,
-    supply your own role and patch here.
-    """
-    iam = session.client("iam")
-    role_name = "EC2HelperEventsRole"
-    assume = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Principal": {"Service": "events.amazonaws.com"},
-                "Action": "sts:AssumeRole",
-            }
-        ],
-    }
-    try:
-        iam.get_role(RoleName=role_name)
-    except iam.exceptions.NoSuchEntityException:
-        iam.create_role(RoleName=role_name, AssumeRolePolicyDocument=json.dumps(assume))
-        iam.attach_role_policy(
-            RoleName=role_name,
-            PolicyArn="arn:aws:iam::aws:policy/service-role/AmazonSSMAutomationRole",
-        )
-        # small wait so the role propagates
-        time.sleep(10)
-    arn = iam.get_role(RoleName=role_name)["Role"]["Arn"]
-    return arn
+
+
+
+
 
 
 def spin_up_or_find(
@@ -256,9 +197,11 @@ def spin_up_or_find(
     region: Optional[str] = None,
     gpu: bool = False,
     dlami: bool = False,
+    auto_terminate_hours: float = 3.0,
 ):
     """
     Find a running instance with the given tag, otherwise create one.
+    Auto-termination is enforced via uptime checks during polling operations.
     Returns: (instance, was_created) - was_created is True if new instance was created, False if existing found.
     """
     sess = _session(region)
@@ -266,7 +209,7 @@ def spin_up_or_find(
     if inst:
         print(f"[bold yellow]Reusing[/] {inst.id}")
         return inst, False
-    return spin_up_instance(instance_type, tag, region, key_name=None, gpu=gpu, dlami=dlami)
+    return spin_up_instance(instance_type, tag, region, key_name=None, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
 
 
 # -----------------------------------------------------
@@ -301,6 +244,61 @@ def _ssm_send(
     return out
 
 
+def check_instance_uptime(instance_id: str, region: Optional[str] = None):
+    """
+    Calculate and return the uptime of an EC2 instance.
+    Returns a dictionary with uptime information.
+    """
+    sess = _session(region)
+    ec2 = sess.resource("ec2")
+    
+    try:
+        instance = ec2.Instance(instance_id)
+        instance.reload()
+        
+        if instance.state["Name"] not in ["running", "pending"]:
+            return {
+                "instance_id": instance_id,
+                "state": instance.state["Name"],
+                "uptime": None,
+                "launch_time": None,
+                "error": f"Instance is {instance.state['Name']}, not running"
+            }
+        
+        launch_time = instance.launch_time
+        current_time = datetime.now(timezone.utc)
+        uptime_delta = current_time - launch_time
+        
+        # Calculate human-readable uptime
+        total_seconds = int(uptime_delta.total_seconds())
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        
+        uptime_str = f"{hours}h {minutes}m {seconds}s"
+        if hours == 0:
+            uptime_str = f"{minutes}m {seconds}s"
+        if hours == 0 and minutes == 0:
+            uptime_str = f"{seconds}s"
+        
+        return {
+            "instance_id": instance_id,
+            "state": instance.state["Name"],
+            "instance_type": instance.instance_type,
+            "launch_time": launch_time,
+            "uptime_seconds": total_seconds,
+            "uptime_hours": round(total_seconds / 3600, 2),
+            "uptime_readable": uptime_str,
+            "availability_zone": instance.placement["AvailabilityZone"]
+        }
+        
+    except Exception as e:
+        return {
+            "instance_id": instance_id,
+            "error": f"Failed to get instance info: {str(e)}"
+        }
+
+
 def run_command(instance_id: str, cmd: List[str], region: Optional[str] = None):
     sess = _session(region)
     return _ssm_send(sess, instance_id, [" ".join(cmd)], comment="ec2-helper run")
@@ -325,19 +323,16 @@ def poll_until_command_succeeds(
     start_time = time.time()
     attempt = 1
     
-    print(f"∙ Polling command: {command}")
-    print(f"∙ Timeout: {timeout}s, Interval: {interval}s")
-    
     while time.time() - start_time < timeout:
         try:
             elapsed = int(time.time() - start_time)
-            print(f"∙ Attempt {attempt} ({elapsed}s elapsed)...")
+            print(f"∙ Polling... (check {attempt}, {elapsed}s elapsed) ⏳")
             
             # Try to run the command
             result = _ssm_send(sess, instance_id, [command], comment="ec2-helper poll")
             
             # If we get here without exception, command succeeded
-            print(f"✅ Command succeeded after {elapsed}s ({attempt} attempts)")
+            print(f"✅ Completed after {elapsed}s")
             return result
             
         except botocore.exceptions.WaiterError as e:
@@ -345,14 +340,8 @@ def poll_until_command_succeeds(
             remaining = timeout - elapsed
             
             if remaining <= 0:
-                print(f"❌ Command failed after {timeout}s timeout ({attempt} attempts)")
+                print(f"❌ Failed after {timeout}s timeout")
                 raise TimeoutError(f"Command '{command}' did not succeed within {timeout}s")
-            
-            # Check if it's a waiter timeout vs actual command failure
-            if "Status" in str(e) and "Failed" in str(e):
-                print(f"⏳ Command failed (exit code != 0), retrying in {interval}s... ({remaining}s remaining)")
-            else:
-                print(f"⚠️  SSM waiter timeout (command may still be running), retrying in {interval}s... ({remaining}s remaining)")
             
             time.sleep(interval)
             attempt += 1
@@ -362,15 +351,14 @@ def poll_until_command_succeeds(
             remaining = timeout - elapsed
             
             if remaining <= 0:
-                print(f"❌ Command failed after {timeout}s timeout ({attempt} attempts)")
+                print(f"❌ Failed after {timeout}s timeout")
                 raise TimeoutError(f"Command '{command}' did not succeed within {timeout}s")
             
-            print(f"⚠️  Unexpected error ({type(e).__name__}), retrying in {interval}s... ({remaining}s remaining)")
             time.sleep(interval)
             attempt += 1
     
     # Timeout reached
-    print(f"❌ Command failed after {timeout}s timeout ({attempt} attempts)")
+    print(f"❌ Failed after {timeout}s timeout")
     raise TimeoutError(f"Command '{command}' did not succeed within {timeout}s")
 
 
@@ -407,6 +395,7 @@ def poll_background_process(
     timeout: int = 1800,
     interval: int = 30,
     region: Optional[str] = None,
+    max_uptime_hours: Optional[float] = None,
 ):
     """
     Poll background process until completion.
@@ -417,18 +406,21 @@ def poll_background_process(
     start_time = time.time()
     attempt = 1
     
-    print(f"∙ Monitoring background process PID: {pid}")
-    print(f"∙ Success condition: {success_condition}")
-    print(f"∙ Timeout: {timeout}s, Interval: {interval}s")
-    
     while time.time() - start_time < timeout:
         elapsed = int(time.time() - start_time)
-        print(f"∙ Check {attempt} ({elapsed}s elapsed)...")
+        print(f"∙ Polling... (check {attempt}, {elapsed}s elapsed) ⏳")
+        
+        # Check instance uptime if limit specified
+        if max_uptime_hours is not None:
+            uptime_info = check_instance_uptime(instance_id, region)
+            if "error" not in uptime_info and uptime_info["uptime_hours"] > max_uptime_hours:
+                print(f"❌ Instance has been running {uptime_info['uptime_readable']} (>{max_uptime_hours}h limit)")
+                raise TimeoutError(f"Instance uptime {uptime_info['uptime_hours']:.1f}h exceeds {max_uptime_hours}h limit")
         
         try:
             # Check if success condition is met
             _ssm_send(sess, instance_id, [success_condition], comment="ec2-helper poll-bg")
-            print(f"✅ Background process completed successfully after {elapsed}s")
+            print(f"✅ Completed after {elapsed}s")
             return True
             
         except Exception:
@@ -437,22 +429,18 @@ def poll_background_process(
                 result = _ssm_send(sess, instance_id, [f"ps -p {pid}"], comment="ec2-helper poll-bg")
                 if pid not in result["StandardOutputContent"]:
                     # Process died but success condition not met
-                    print(f"❌ Background process {pid} exited without success condition")
+                    print(f"❌ Process {pid} exited without success")
                     return False
-                    
-                # Process still running, continue polling
-                remaining = timeout - elapsed
-                print(f"⏳ Process running, checking again in {interval}s... ({remaining}s remaining)")
                 
             except Exception:
                 # Process check failed, assume it's done
-                print(f"❌ Unable to check process status for PID {pid}")
+                print(f"❌ Unable to check process status")
                 return False
         
         time.sleep(interval)
         attempt += 1
     
-    print(f"❌ Background process monitoring timed out after {timeout}s")
+    print(f"❌ Failed after {timeout}s timeout")
     raise TimeoutError(f"Background process monitoring timed out after {timeout}s")
 
 
@@ -660,10 +648,11 @@ def cli_spin_up(
     tag: str = typer.Option(..., help="Unique tag value to identify the box"),
     gpu: bool = typer.Option(False, help="Use GPU-optimized AMI with NVIDIA drivers"),
     dlami: bool = typer.Option(False, help="Use Deep Learning AMI with PyTorch (overrides --gpu)"),
+    auto_terminate_hours: float = typer.Option(3.0, help="Hours until auto-termination during polling (default: 3.0)"),
     region: str = typer.Option(None, help="AWS region (default us-east-1)"),
 ):
     """Create a new EC2 instance."""
-    instance, was_created = spin_up_instance(instance_type, tag, region, key_name=None, gpu=gpu, dlami=dlami)
+    instance, was_created = spin_up_instance(instance_type, tag, region, key_name=None, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
     print(f"∙ Instance created: {was_created}")
 
 
@@ -686,10 +675,11 @@ def cli_spinup_or_find(
     tag: str = typer.Option(..., help="Tag value to search / create"),
     gpu: bool = typer.Option(False, help="Use GPU-optimized AMI with NVIDIA drivers"),
     dlami: bool = typer.Option(False, help="Use Deep Learning AMI with PyTorch (overrides --gpu)"),
+    auto_terminate_hours: float = typer.Option(3.0, help="Hours until auto-termination during polling (default: 3.0)"),
     region: str = typer.Option(None, help="AWS region"),
 ):
     """Reuse a running instance or create one."""
-    instance, was_created = spin_up_or_find(instance_type, tag, region, gpu=gpu, dlami=dlami)
+    instance, was_created = spin_up_or_find(instance_type, tag, region, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
     print(f"∙ Instance created: {was_created}")
 
 
@@ -766,14 +756,35 @@ def cli_poll_background(
     success_condition: str = typer.Option("test -f /tmp/done", help="Success condition command"),
     timeout: int = typer.Option(1800, help="Timeout in seconds (default: 1800)"),
     interval: int = typer.Option(30, help="Polling interval in seconds (default: 30)"),
+    max_uptime_hours: float = typer.Option(None, help="Auto-terminate if instance uptime exceeds this (hours)"),
     region: str = typer.Option(None, help="AWS region"),
 ):
-    """Poll background process until completion."""
-    result = poll_background_process(instance_id, pid, success_condition, timeout, interval, region)
+    """Poll background process until completion with optional auto-termination."""
+    result = poll_background_process(instance_id, pid, success_condition, timeout, interval, region, max_uptime_hours)
     if result:
         print("✅ Background process completed successfully")
     else:
         print("❌ Background process failed")
+
+
+@app.command("uptime")
+def cli_uptime(
+    instance_id: str = typer.Option(..., help="Instance ID to check uptime for"),
+    region: str = typer.Option(None, help="AWS region"),
+):
+    """Check how long an instance has been running."""
+    uptime_info = check_instance_uptime(instance_id, region)
+    
+    if "error" in uptime_info:
+        print(f"[red]Error:[/] {uptime_info['error']}")
+        return
+    
+    print(f"[bold cyan]Instance {instance_id}[/]")
+    print(f"  State: {uptime_info['state']}")
+    print(f"  Type: {uptime_info['instance_type']}")
+    print(f"  Zone: {uptime_info['availability_zone']}")
+    print(f"  Launch time: {uptime_info['launch_time'].strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    print(f"  [bold green]Uptime: {uptime_info['uptime_readable']}[/] ({uptime_info['uptime_hours']} hours)")
 
 
 @app.command("terminate")

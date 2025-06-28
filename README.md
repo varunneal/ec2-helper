@@ -29,7 +29,7 @@ The script:
   • Defaults to us-east-1 unless you pass --region
   • Identifies "your" instance by the tag value you supply via --tag
   • Uses AWS SSM for everything (no SSH keys / security-group headaches)
-  • Schedules termination 3 h after creation with an EventBridge rule
+  • Auto-termination enforced via uptime checks during polling operations
   • Reads AWS creds from .env (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)
   • Supports standard AL2023, GPU-optimized, and Deep Learning AMIs
   • Includes file transfer via S3, volume resizing, and polling utilities
@@ -42,7 +42,7 @@ Features
 - **Remote Execution**: Run commands via AWS SSM (no SSH required)
 - **File Transfer**: Upload/download files using S3 as intermediary
 - **Polling**: Wait for commands to succeed or monitor background processes
-- **Auto-termination**: Instances auto-terminate after 3 hours to prevent runaway costs
+- **Auto-termination**: Uptime-based termination during polling operations prevents runaway costs
 
 Importing
 ---------
