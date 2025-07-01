@@ -1,48 +1,18 @@
-#!/usr/bin/env python
-# uv python dependencies:
-#   - boto3>=1.34
-#   - botocore>=1.34
-#   - typer>=0.12
-#   - python-dotenv>=1.0
-#   - rich>=13.7
-"""
-ec2_helper.py – zero-friction spin-up / find / setup for EC2
+#!/usr/bin/env -S uv run --script
+#
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "boto3>=1.34",
+#     "botocore>=1.34", 
+#     "typer>=0.12",
+#     "python-dotenv>=1.0",
+#     "rich>=13.7"
+# ]
+# ///
 
-Basic CLI examples
-------------------
-# create or reuse a box (with GPU support)
-uv run ec2_helper.py spin-up-or-find --instance-type g4dn.xlarge --tag whisper-gpu --gpu
-
-# create or reuse a box (with Deep Learning AMI)
-uv run ec2_helper.py spin-up-or-find --instance-type g5.xlarge --tag ml-training --dlami
-
-# run a one-off command
-uv run ec2_helper.py run --instance-id i-0abc123 -- bash "nvidia-smi"
-
-# install uv and resize volume (default 32GB)
-uv run ec2_helper.py setup --instance-id i-0abc123 --volume-size 64
-
-# upload/download files via S3
-uv run ec2_helper.py upload --instance-id i-0abc123 --local-file model.pkl
-uv run ec2_helper.py download --instance-id i-0abc123 --remote-path /tmp/results.json
-
-# poll until command succeeds
-uv run ec2_helper.py poll --instance-id i-0abc123 --command "systemctl status nginx"
-
-The script:
-  • Defaults to us-east-1 unless you pass --region
-  • Identifies “your” instance by the tag value you supply via --tag
-  • Uses AWS SSM for everything (no SSH keys / security-group headaches)
-  • Auto-termination enforced via uptime checks during polling operations
-  • Reads AWS creds from .env (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)
-
-Importing
----------
->>> import ec2_helper as ec2
->>> inst, was_created = ec2.spin_up_or_find("g5.xlarge", tag="mybox")
->>> ec2.run_command(inst.id, ["python", "-c", "print('hi')"])
-"""
 from __future__ import annotations
+
 
 import io
 import json

@@ -1,29 +1,40 @@
-ec2_helper.py – zero-friction spin-up / find / setup for EC2
+ec2_helper.py – zero-friction helper suite for EC2s
+
+Prerequisites
+-------------
+1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+2. Make the script executable: `chmod +x ec2_helper.py`
+3. Create .env file with AWS credentials:
+   ```
+   AWS_ACCESS_KEY_ID=your_key_here
+   AWS_SECRET_ACCESS_KEY=your_secret_here
+   ```
+4. Ensure the IAM role "EC2HelperSSMProfile" exists with SSM permissions
 
 Basic CLI examples
 ------------------
 # create or reuse a box (with GPU support)
-uv run ec2_helper.py spin-up-or-find --instance-type g4dn.xlarge --tag whisper-gpu --gpu
+./ec2_helper.py spin-up-or-find --instance-type g4dn.xlarge --tag whisper-gpu --gpu
 
 # create or reuse a box (with Deep Learning AMI)
-uv run ec2_helper.py spin-up-or-find --instance-type g5.xlarge --tag ml-training --dlami
+./ec2_helper.py spin-up-or-find --instance-type g5.xlarge --tag ml-training --dlami
 
 # run a one-off command
-uv run ec2_helper.py run --instance-id i-0abc123 -- bash "nvidia-smi"
+./ec2_helper.py run --instance-id i-0abc123 -- bash "nvidia-smi"
 
 # install uv and resize volume (default 32GB)
-uv run ec2_helper.py setup --instance-id i-0abc123 --volume-size 64
+./ec2_helper.py setup --instance-id i-0abc123 --volume-size 64
 
 # upload/download files via S3
-uv run ec2_helper.py upload --instance-id i-0abc123 --local-file model.pkl
-uv run ec2_helper.py download --instance-id i-0abc123 --remote-path /tmp/results.json
+./ec2_helper.py upload --instance-id i-0abc123 --local-file model.pkl
+./ec2_helper.py download --instance-id i-0abc123 --remote-path /tmp/results.json
 
 # poll until command succeeds
-uv run ec2_helper.py poll --instance-id i-0abc123 --command "systemctl status nginx"
+./ec2_helper.py poll --instance-id i-0abc123 --command "systemctl status nginx"
 
 # launch background process and monitor
-uv run ec2_helper.py launch-bg --instance-id i-0abc123 --command "python train.py"
-uv run ec2_helper.py poll-bg --instance-id i-0abc123 --pid 12345 --success-condition "test -f /tmp/done"
+./ec2_helper.py launch-bg --instance-id i-0abc123 --command "python train.py"
+./ec2_helper.py poll-bg --instance-id i-0abc123 --pid 12345 --success-condition "test -f /tmp/done"
 
 The script:
   • Defaults to us-east-1 unless you pass --region
@@ -51,13 +62,3 @@ Importing
 >>> ec2.run_command(inst.id, ["python", "-c", "print('hi')"])
 >>> ec2.upload_file(inst.id, pathlib.Path("model.pkl"))
 >>> ec2.poll_until_command_succeeds(inst.id, "systemctl status nginx")
-
-Prerequisites
--------------
-1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-2. Create .env file with AWS credentials:
-   ```
-   AWS_ACCESS_KEY_ID=your_key_here
-   AWS_SECRET_ACCESS_KEY=your_secret_here
-   ```
-3. Ensure the IAM role "EC2HelperSSMProfile" exists with SSM permissions
