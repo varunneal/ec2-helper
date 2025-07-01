@@ -1,11 +1,11 @@
 # EC2 Helper
 
-ec2_helper.py – Single-file helper suite for EC2s
+ec2_helper.py – Single file helper suite for EC2s
 
 ## Prerequisites
 
 1. Install uv (recommended): `curl -LsSf https://astral.sh/uv/install.sh | sh`
-2. In your $PATH create an .env file with AWS credentials:
+2. In your $PATH (e.g. your current directory) create an .env file with AWS credentials:
    ```
    AWS_ACCESS_KEY_ID=your_key_here
    AWS_SECRET_ACCESS_KEY=your_secret_here
