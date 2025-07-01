@@ -142,7 +142,7 @@ def spin_up_instance(
         IamInstanceProfile={"Name": "EC2HelperSSMProfile"},  # needs to exist
     )[0]
 
-    print(f"∙ Waiting for instance {inst.id} to be running…")
+    print(f"- Waiting for instance {inst.id} to be running...")
     inst.wait_until_running()
     inst.reload()
 
@@ -201,7 +201,7 @@ def _ssm_send(
         TimeoutSeconds=timeout,
     )
     cmd_id = resp["Command"]["CommandId"]
-    print(f"∙ SSM command {cmd_id} sent, waiting…")
+    print(f"- SSM command {cmd_id} sent, waiting...")
     waiter = ssm.get_waiter("command_executed")
     waiter.wait(CommandId=cmd_id, InstanceId=instance_id)
     out = ssm.get_command_invocation(CommandId=cmd_id, InstanceId=instance_id)
@@ -296,13 +296,13 @@ def poll_until_command_succeeds(
     while time.time() - start_time < timeout:
         try:
             elapsed = int(time.time() - start_time)
-            print(f"∙ Polling... (check {attempt}, {elapsed}s elapsed) ⏳")
+            print(f"- Polling... (check {attempt}, {elapsed}s elapsed)")
             
             # Try to run the command
             result = _ssm_send(sess, instance_id, [command], comment="ec2-helper poll")
             
             # If we get here without exception, command succeeded
-            print(f"✅ Completed after {elapsed}s")
+            print(f"SUCCESS: Completed after {elapsed}s")
             return result
             
         except botocore.exceptions.WaiterError as e:
@@ -310,7 +310,7 @@ def poll_until_command_succeeds(
             remaining = timeout - elapsed
             
             if remaining <= 0:
-                print(f"❌ Failed after {timeout}s timeout")
+                print(f"ERROR: Failed after {timeout}s timeout")
                 raise TimeoutError(f"Command '{command}' did not succeed within {timeout}s")
             
             time.sleep(interval)
@@ -321,14 +321,14 @@ def poll_until_command_succeeds(
             remaining = timeout - elapsed
             
             if remaining <= 0:
-                print(f"❌ Failed after {timeout}s timeout")
+                print(f"ERROR: Failed after {timeout}s timeout")
                 raise TimeoutError(f"Command '{command}' did not succeed within {timeout}s")
             
             time.sleep(interval)
             attempt += 1
     
     # Timeout reached
-    print(f"❌ Failed after {timeout}s timeout")
+    print(f"ERROR: Failed after {timeout}s timeout")
     raise TimeoutError(f"Command '{command}' did not succeed within {timeout}s")
 
 
@@ -348,13 +348,13 @@ def launch_background_process(
     # Wrap command to run in background and capture PID
     bg_command = f"nohup {command} > {log_file} 2>&1 & echo $!"
     
-    print(f"∙ Launching background process: {command}")
-    print(f"∙ Logs: {log_file}")
+    print(f"- Launching background process: {command}")
+    print(f"- Logs: {log_file}")
     
     result = _ssm_send(sess, instance_id, [bg_command], comment="ec2-helper background")
     pid = result["StandardOutputContent"].strip()
     
-    print(f"∙ Background process started with PID: {pid}")
+    print(f"- Background process started with PID: {pid}")
     return pid
 
 
@@ -378,19 +378,19 @@ def poll_background_process(
     
     while time.time() - start_time < timeout:
         elapsed = int(time.time() - start_time)
-        print(f"∙ Polling... (check {attempt}, {elapsed}s elapsed) ⏳")
+        print(f"- Polling... (check {attempt}, {elapsed}s elapsed)")
         
         # Check instance uptime if limit specified
         if max_uptime_hours is not None:
             uptime_info = check_instance_uptime(instance_id, region)
             if "error" not in uptime_info and uptime_info["uptime_hours"] > max_uptime_hours:
-                print(f"❌ Instance has been running {uptime_info['uptime_readable']} (>{max_uptime_hours}h limit)")
+                print(f"ERROR: Instance has been running {uptime_info['uptime_readable']} (>{max_uptime_hours}h limit)")
                 raise TimeoutError(f"Instance uptime {uptime_info['uptime_hours']:.1f}h exceeds {max_uptime_hours}h limit")
         
         try:
             # Check if success condition is met
             _ssm_send(sess, instance_id, [success_condition], comment="ec2-helper poll-bg")
-            print(f"✅ Completed after {elapsed}s")
+            print(f"SUCCESS: Completed after {elapsed}s")
             return True
             
         except Exception:
@@ -399,18 +399,18 @@ def poll_background_process(
                 result = _ssm_send(sess, instance_id, [f"ps -p {pid}"], comment="ec2-helper poll-bg")
                 if pid not in result["StandardOutputContent"]:
                     # Process died but success condition not met
-                    print(f"❌ Process {pid} exited without success")
+                    print(f"ERROR: Process {pid} exited without success")
                     return False
                 
             except Exception:
                 # Process check failed, assume it's done
-                print(f"❌ Unable to check process status")
+                print(f"ERROR: Unable to check process status")
                 return False
         
         time.sleep(interval)
         attempt += 1
     
-    print(f"❌ Failed after {timeout}s timeout")
+    print(f"ERROR: Failed after {timeout}s timeout")
     raise TimeoutError(f"Background process monitoring timed out after {timeout}s")
 
 
@@ -427,7 +427,7 @@ def setup_instance(
     ec2 = sess.client("ec2")
     
     # 1) Resize the EBS volume
-    print(f"∙ Resizing EBS volume to {volume_size}GB...")
+    print(f"- Resizing EBS volume to {volume_size}GB...")
     
     # Get the instance's root volume
     instance = sess.resource("ec2").Instance(instance_id)
@@ -444,19 +444,19 @@ def setup_instance(
     current_size = volume.size
     
     if volume_size <= current_size:
-        print(f"∙ Volume is already {current_size}GB (requested {volume_size}GB), skipping resize")
+        print(f"- Volume is already {current_size}GB (requested {volume_size}GB), skipping resize")
     else:
         # Modify the volume size
         ec2.modify_volume(VolumeId=volume.id, Size=volume_size)
-        print(f"∙ Volume {volume.id} resize initiated ({current_size}GB → {volume_size}GB)")
+        print(f"- Volume {volume.id} resize initiated ({current_size}GB -> {volume_size}GB)")
         
         # Wait for the modification to complete
-        print("∙ Waiting for volume modification to complete...")
+        print("- Waiting for volume modification to complete...")
         waiter = ec2.get_waiter("volume_in_use")
         waiter.wait(VolumeIds=[volume.id])
         
         # 2) Extend the filesystem inside the instance
-        print("∙ Extending filesystem...")
+        print("- Extending filesystem...")
         filesystem_commands = [
             # Install growpart if not available
             "sudo yum install -y cloud-utils-growpart",
@@ -469,7 +469,7 @@ def setup_instance(
         _ssm_send(sess, instance_id, filesystem_commands, comment="ec2-helper volume resize")
     
     # 3) Install uv
-    print("∙ Installing uv...")
+    print("- Installing uv...")
     commands = [
         "sudo yum -y update -q",
         # Install UV using the official installer with proper environment
@@ -518,7 +518,7 @@ def upload_file(
     transfer_id = str(uuid.uuid4())[:8]
     s3_key = f"transfers/{instance_id}/{transfer_id}/{local_path.name}"
     
-    print(f"∙ Uploading {local_path.name} to S3...")
+    print(f"- Uploading {local_path.name} to S3...")
     s3.upload_file(str(local_path), bucket, s3_key)
     
     # Generate presigned URL for download
@@ -538,12 +538,12 @@ def upload_file(
         f"echo 'File uploaded to {remote_path}'",
     ]
     
-    print(f"∙ Downloading to instance at {remote_path}...")
+    print(f"- Downloading to instance at {remote_path}...")
     _ssm_send(sess, instance_id, commands, comment="ec2-helper upload")
     
     # Cleanup S3 object
     s3.delete_object(Bucket=bucket, Key=s3_key)
-    print(f"∙ Upload complete: {local_path} → {remote_path}")
+    print(f"- Upload complete: {local_path} -> {remote_path}")
 
 
 def download_file(
@@ -590,7 +590,7 @@ def download_file(
         f"echo 'File uploaded from {remote_path}'",
     ]
     
-    print(f"∙ Uploading {remote_path} from instance to S3...")
+    print(f"- Uploading {remote_path} from instance to S3...")
     _ssm_send(sess, instance_id, commands, comment="ec2-helper download")
     
     # Set local path if not specified
@@ -598,12 +598,12 @@ def download_file(
         local_path = pathlib.Path(filename)
     
     # Download file to local machine
-    print(f"∙ Downloading to local path {local_path}...")
+    print(f"- Downloading to local path {local_path}...")
     s3.download_file(bucket, s3_key, str(local_path))
     
     # Cleanup S3 object
     s3.delete_object(Bucket=bucket, Key=s3_key)
-    print(f"∙ Download complete: {remote_path} → {local_path}")
+    print(f"- Download complete: {remote_path} -> {local_path}")
 
 
 # -----------------------------------------------------
@@ -623,7 +623,7 @@ def cli_spin_up(
 ):
     """Create a new EC2 instance."""
     instance, was_created = spin_up_instance(instance_type, tag, region, key_name=None, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
-    print(f"∙ Instance created: {was_created}")
+    print(f"- Instance created: {was_created}")
 
 
 @app.command("find")
@@ -650,7 +650,7 @@ def cli_spinup_or_find(
 ):
     """Reuse a running instance or create one."""
     instance, was_created = spin_up_or_find(instance_type, tag, region, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
-    print(f"∙ Instance created: {was_created}")
+    print(f"- Instance created: {was_created}")
 
 
 @app.command("setup")
@@ -732,9 +732,9 @@ def cli_poll_background(
     """Poll background process until completion with optional auto-termination."""
     result = poll_background_process(instance_id, pid, success_condition, timeout, interval, region, max_uptime_hours)
     if result:
-        print("✅ Background process completed successfully")
+        print("SUCCESS: Background process completed successfully")
     else:
-        print("❌ Background process failed")
+        print("ERROR: Background process failed")
 
 
 @app.command("uptime")
