@@ -132,15 +132,14 @@ def _find_instance(session: boto3.Session, tag: str):
     return insts[0] if insts else None
 
 
-@app.command("spin-up")
 def spin_up_instance(
-    instance_type: str = typer.Option(..., help="e.g. g4dn.xlarge"),
-    tag: str = typer.Option(..., help="Unique tag value to identify the box"),
-    region: str = typer.Option(None, help="AWS region (default us-east-1)"),
-    key_name: Optional[str] = None,
-    gpu: bool = typer.Option(False, help="Use GPU-optimized AMI with NVIDIA drivers"),
-    dlami: bool = typer.Option(False, help="Use Deep Learning AMI with PyTorch (overrides --gpu)"),
-    auto_terminate_hours: float = typer.Option(3.0, help="Hours until auto-termination during polling (default: 3.0)"),
+    instance_type: str, 
+    tag: str, 
+    region: Optional[str] = None, 
+    key_name: Optional[str] = None, 
+    gpu: bool = False, 
+    dlami: bool = False, 
+    auto_terminate_hours: float = 3.0
 ):
     """
     Start a fresh EC2 instance (Amazon Linux 2023) and tag it.
@@ -195,14 +194,13 @@ def spin_up_instance(
 
 
 
-@app.command("spin-up-or-find")
 def spin_up_or_find(
-    instance_type: str = typer.Option(..., help="Desired instance type"),
-    tag: str = typer.Option(..., help="Tag value to search / create"),
-    region: str = typer.Option(None, help="AWS region"),
-    gpu: bool = typer.Option(False, help="Use GPU-optimized AMI with NVIDIA drivers"),
-    dlami: bool = typer.Option(False, help="Use Deep Learning AMI with PyTorch (overrides --gpu)"),
-    auto_terminate_hours: float = typer.Option(3.0, help="Hours until auto-termination during polling (default: 3.0)"),
+    instance_type: str,
+    tag: str,
+    region: Optional[str] = None,
+    gpu: bool = False,
+    dlami: bool = False,
+    auto_terminate_hours: float = 3.0,
 ):
     """
     Find a running instance with the given tag, otherwise create one.
@@ -249,11 +247,7 @@ def _ssm_send(
     return out
 
 
-@app.command("uptime")
-def check_instance_uptime(
-    instance_id: str = typer.Option(..., help="Instance ID to check uptime for"),
-    region: str = typer.Option(None, help="AWS region"),
-):
+def check_instance_uptime(instance_id: str, region: Optional[str] = None):
     """
     Calculate and return the uptime of an EC2 instance.
     Returns a dictionary with uptime information.
@@ -323,24 +317,18 @@ def check_instance_uptime(
         return error_info
 
 
-@app.command("run")
-def run_command(
-    instance_id: str = typer.Option(..., help="Target instance"),
-    region: str = typer.Option(None, help="AWS region"),
-    bash: List[str] = typer.Argument(..., help='Command to run, e.g. -- bash "ls -la"'),
-):
+def run_command(instance_id: str, cmd: List[str], region: Optional[str] = None):
     """Run a bash command inside the instance via SSM."""
     sess = _session(region)
-    return _ssm_send(sess, instance_id, [" ".join(bash)], comment="ec2-helper run")
+    return _ssm_send(sess, instance_id, [" ".join(cmd)], comment="ec2-helper run")
 
 
-@app.command("poll")
 def poll_until_command_succeeds(
-    instance_id: str = typer.Option(..., help="Target instance"),
-    command: str = typer.Option(..., help="Command to poll until success"),
-    timeout: int = typer.Option(300, help="Timeout in seconds (default: 300)"),
-    interval: int = typer.Option(10, help="Polling interval in seconds (default: 10)"),
-    region: str = typer.Option(None, help="AWS region"),
+    instance_id: str,
+    command: str,
+    timeout: int = 300,
+    interval: int = 10,
+    region: Optional[str] = None,
 ):
     """
     Keep running command until it exits with code 0.
@@ -393,12 +381,11 @@ def poll_until_command_succeeds(
     raise TimeoutError(f"Command '{command}' did not succeed within {timeout}s")
 
 
-@app.command("launch-bg")
 def launch_background_process(
-    instance_id: str = typer.Option(..., help="Target instance"),
-    command: str = typer.Option(..., help="Command to run in background"),
-    log_file: str = typer.Option("/tmp/process.log", help="Log file path"),
-    region: str = typer.Option(None, help="AWS region"),
+    instance_id: str,
+    command: str,
+    log_file: str = "/tmp/process.log",
+    region: Optional[str] = None,
 ) -> str:
     """
     Launch command in background, return process info.
@@ -421,15 +408,14 @@ def launch_background_process(
     return pid
 
 
-@app.command("poll-bg")
 def poll_background_process(
-    instance_id: str = typer.Option(..., help="Target instance"),
-    pid: str = typer.Option(..., help="Process ID to monitor"),
-    success_condition: str = typer.Option("test -f /tmp/done", help="Success condition command"),
-    timeout: int = typer.Option(1800, help="Timeout in seconds (default: 1800)"),
-    interval: int = typer.Option(30, help="Polling interval in seconds (default: 30)"),
-    region: str = typer.Option(None, help="AWS region"),
-    max_uptime_hours: float = typer.Option(None, help="Auto-terminate if instance uptime exceeds this (hours)"),
+    instance_id: str,
+    pid: str,
+    success_condition: str = "test -f /tmp/done",
+    timeout: int = 1800,
+    interval: int = 30,
+    region: Optional[str] = None,
+    max_uptime_hours: Optional[float] = None,
 ):
     """
     Poll background process until completion.
@@ -481,11 +467,10 @@ def poll_background_process(
     raise TimeoutError(f"Background process monitoring timed out after {timeout}s")
 
 
-@app.command("setup")
 def setup_instance(
-    instance_id: str = typer.Option(..., help="Instance to configure"),
-    volume_size: int = typer.Option(32, help="EBS volume size in GB (default: 32)"),
-    region: str = typer.Option(None, help="AWS region"),
+    instance_id: str,
+    volume_size: int = 32,
+    region: Optional[str] = None,
 ):
     """
     Install uv (Python package manager) and resize EBS volume on the EC2 instance.
@@ -556,12 +541,11 @@ def setup_instance(
     _ssm_send(sess, instance_id, commands, comment="ec2-helper setup")
 
 
-@app.command("upload")
 def upload_file(
-    instance_id: str = typer.Option(..., help="Target instance"),
-    local_file: pathlib.Path = typer.Option(..., exists=True, readable=True, help="Local file to upload"),
-    remote_path: str = typer.Option(None, help="Remote path (default: /home/ec2-user/filename)"),
-    region: str = typer.Option(None, help="AWS region"),
+    instance_id: str,
+    local_path: pathlib.Path,
+    remote_path: str = None,
+    region: Optional[str] = None,
 ):
     """
     Upload a file from local machine to EC2 instance via S3.
@@ -585,10 +569,10 @@ def upload_file(
     # Generate unique S3 key for this transfer
     import uuid
     transfer_id = str(uuid.uuid4())[:8]
-    s3_key = f"transfers/{instance_id}/{transfer_id}/{local_file.name}"
+    s3_key = f"transfers/{instance_id}/{transfer_id}/{local_path.name}"
     
-    print(f"- Uploading {local_file.name} to S3...")
-    s3.upload_file(str(local_file), bucket, s3_key)
+    print(f"- Uploading {local_path.name} to S3...")
+    s3.upload_file(str(local_path), bucket, s3_key)
     
     # Generate presigned URL for download
     download_url = s3.generate_presigned_url(
@@ -599,7 +583,7 @@ def upload_file(
     
     # Set remote path if not specified
     if remote_path is None:
-        remote_path = f"/home/ec2-user/{local_file.name}"
+        remote_path = f"/home/ec2-user/{local_path.name}"
     
     # Download file on EC2 instance
     commands = [
@@ -612,15 +596,14 @@ def upload_file(
     
     # Cleanup S3 object
     s3.delete_object(Bucket=bucket, Key=s3_key)
-    print(f"- Upload complete: {local_file} -> {remote_path}")
+    print(f"- Upload complete: {local_path} -> {remote_path}")
 
 
-@app.command("download")
 def download_file(
-    instance_id: str = typer.Option(..., help="Target instance"),
-    remote_path: str = typer.Option(..., help="Remote file path to download"),
-    local_file: pathlib.Path = typer.Option(None, help="Local destination (default: filename)"),
-    region: str = typer.Option(None, help="AWS region"),
+    instance_id: str,
+    remote_path: str,
+    local_path: pathlib.Path = None,
+    region: Optional[str] = None,
 ):
     """
     Download a file from EC2 instance to local machine via S3.
@@ -664,34 +647,26 @@ def download_file(
     _ssm_send(sess, instance_id, commands, comment="ec2-helper download")
     
     # Set local path if not specified
-    if local_file is None:
-        local_file = pathlib.Path(filename)
+    if local_path is None:
+        local_path = pathlib.Path(filename)
     
     # Download file to local machine
-    print(f"- Downloading to local path {local_file}...")
-    s3.download_file(bucket, s3_key, str(local_file))
+    print(f"- Downloading to local path {local_path}...")
+    s3.download_file(bucket, s3_key, str(local_path))
     
     # Cleanup S3 object
     s3.delete_object(Bucket=bucket, Key=s3_key)
-    print(f"- Download complete: {remote_path} -> {local_file}")
+    print(f"- Download complete: {remote_path} -> {local_path}")
 
 
-@app.command("terminate")
-def terminate_instance(
-    instance_id: str = typer.Option(..., help="Instance ID to terminate"),
-    region: str = typer.Option(None, help="AWS region"),
-):
+def terminate_instance(instance_id: str, region: Optional[str] = None):
     """Terminate the specified EC2 instance."""
     sess = _session(region)
     print(f"[red]Terminating[/] {instance_id}")
     sess.client("ec2").terminate_instances(InstanceIds=[instance_id])
 
 
-@app.command("find")
-def find_instance(
-    tag: str = typer.Option(..., help="Tag value used when you spun it up"),
-    region: str = typer.Option(None, help="AWS region"),
-):
+def find_instance(tag: str, region: Optional[str] = None):
     """Find and return instance info by tag, or None if not found."""
     inst = _find_instance(_session(region), tag)
     if inst:
@@ -703,8 +678,133 @@ def find_instance(
 
 
 # -----------------------------------------------------
-#  CLI Commands (using core functions directly)
+#  CLI Commands (thin wrappers calling core functions)
 # -----------------------------------------------------
+
+@app.command("spin-up")
+def spin_up_command(
+    instance_type: str = typer.Option(..., help="e.g. g4dn.xlarge"),
+    tag: str = typer.Option(..., help="Unique tag value to identify the box"),
+    region: str = typer.Option(None, help="AWS region (default us-east-1)"),
+    gpu: bool = typer.Option(False, help="Use GPU-optimized AMI with NVIDIA drivers"),
+    dlami: bool = typer.Option(False, help="Use Deep Learning AMI with PyTorch (overrides --gpu)"),
+    auto_terminate_hours: float = typer.Option(3.0, help="Hours until auto-termination during polling (default: 3.0)"),
+):
+    """Create a new EC2 instance."""
+    spin_up_instance(instance_type, tag, region, key_name=None, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
+
+@app.command("spin-up-or-find")
+def spin_up_or_find_command(
+    instance_type: str = typer.Option(..., help="Desired instance type"),
+    tag: str = typer.Option(..., help="Tag value to search / create"),
+    region: str = typer.Option(None, help="AWS region"),
+    gpu: bool = typer.Option(False, help="Use GPU-optimized AMI with NVIDIA drivers"),
+    dlami: bool = typer.Option(False, help="Use Deep Learning AMI with PyTorch (overrides --gpu)"),
+    auto_terminate_hours: float = typer.Option(3.0, help="Hours until auto-termination during polling (default: 3.0)"),
+):
+    """Reuse a running instance or create one."""
+    spin_up_or_find(instance_type, tag, region, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
+
+@app.command("find")
+def find_command(
+    tag: str = typer.Option(..., help="Tag value used when you spun it up"),
+    region: str = typer.Option(None, help="AWS region"),
+):
+    """Print the instance ID if found."""
+    find_instance(tag, region)
+
+@app.command("setup")
+def setup_command(
+    instance_id: str = typer.Option(..., help="Instance to configure"),
+    volume_size: int = typer.Option(32, help="EBS volume size in GB (default: 32)"),
+    region: str = typer.Option(None, help="AWS region"),
+):
+    """Install uv (Python package manager) and resize EBS volume on the instance."""
+    setup_instance(instance_id, volume_size, region)
+
+@app.command("run")
+def run_command_cli(
+    instance_id: str = typer.Option(..., help="Target instance"),
+    region: str = typer.Option(None, help="AWS region"),
+    bash: List[str] = typer.Argument(..., help='Command to run, e.g. -- bash "ls -la"'),
+):
+    """Run a bash command inside the instance via SSM."""
+    run_command(instance_id, bash, region)
+
+@app.command("upload")
+def upload_command(
+    instance_id: str = typer.Option(..., help="Target instance"),
+    local_file: pathlib.Path = typer.Option(..., exists=True, readable=True, help="Local file to upload"),
+    remote_path: str = typer.Option(None, help="Remote path (default: /home/ec2-user/filename)"),
+    region: str = typer.Option(None, help="AWS region"),
+):
+    """Upload a file to the EC2 instance via S3."""
+    upload_file(instance_id, local_file, remote_path, region)
+
+@app.command("download")
+def download_command(
+    instance_id: str = typer.Option(..., help="Target instance"),
+    remote_path: str = typer.Option(..., help="Remote file path to download"),
+    local_file: pathlib.Path = typer.Option(None, help="Local destination (default: filename)"),
+    region: str = typer.Option(None, help="AWS region"),
+):
+    """Download a file from the EC2 instance via S3."""
+    download_file(instance_id, remote_path, local_file, region)
+
+@app.command("poll")
+def poll_command(
+    instance_id: str = typer.Option(..., help="Target instance"),
+    command: str = typer.Option(..., help="Command to poll until success"),
+    timeout: int = typer.Option(300, help="Timeout in seconds (default: 300)"),
+    interval: int = typer.Option(10, help="Polling interval in seconds (default: 10)"),
+    region: str = typer.Option(None, help="AWS region"),
+):
+    """Poll command until it succeeds (exits with code 0)."""
+    poll_until_command_succeeds(instance_id, command, timeout, interval, region)
+
+@app.command("launch-bg")
+def launch_bg_command(
+    instance_id: str = typer.Option(..., help="Target instance"),
+    command: str = typer.Option(..., help="Command to run in background"),
+    log_file: str = typer.Option("/tmp/process.log", help="Log file path"),
+    region: str = typer.Option(None, help="AWS region"),
+):
+    """Launch a command in background and return PID."""
+    pid = launch_background_process(instance_id, command, log_file, region)
+    print(f"Background process PID: {pid}")
+
+@app.command("poll-bg")
+def poll_bg_command(
+    instance_id: str = typer.Option(..., help="Target instance"),
+    pid: str = typer.Option(..., help="Process ID to monitor"),
+    success_condition: str = typer.Option("test -f /tmp/done", help="Success condition command"),
+    timeout: int = typer.Option(1800, help="Timeout in seconds (default: 1800)"),
+    interval: int = typer.Option(30, help="Polling interval in seconds (default: 30)"),
+    max_uptime_hours: float = typer.Option(None, help="Auto-terminate if instance uptime exceeds this (hours)"),
+    region: str = typer.Option(None, help="AWS region"),
+):
+    """Poll background process until completion with optional auto-termination."""
+    result = poll_background_process(instance_id, pid, success_condition, timeout, interval, region, max_uptime_hours)
+    if result:
+        print("SUCCESS: Background process completed successfully")
+    else:
+        print("ERROR: Background process failed")
+
+@app.command("uptime")
+def uptime_command(
+    instance_id: str = typer.Option(..., help="Instance ID to check uptime for"),
+    region: str = typer.Option(None, help="AWS region"),
+):
+    """Check how long an instance has been running."""
+    check_instance_uptime(instance_id, region)
+
+@app.command("terminate")
+def terminate_command(
+    instance_id: str = typer.Option(..., help="Instance ID to terminate"),
+    region: str = typer.Option(None, help="AWS region"),
+):
+    """Terminate the instance immediately."""
+    terminate_instance(instance_id, region)
 
 
 
