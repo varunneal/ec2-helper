@@ -2,13 +2,13 @@ ec2_helper.py – Single-file helper suite for EC2s
 
 Prerequisites
 -------------
-1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+1. Install uv (recommended): `curl -LsSf https://astral.sh/uv/install.sh | sh`
 2. Create .env file with AWS credentials:
    ```
    AWS_ACCESS_KEY_ID=your_key_here
    AWS_SECRET_ACCESS_KEY=your_secret_here
    ```
-3. Ensure the IAM role "EC2HelperSSMProfile" exists with SSM permissions
+3. In AWS create an IAM role "EC2HelperSSMProfile" with SSM and EC2 permissions
 
 
 Installation
@@ -18,7 +18,7 @@ This is just a single script so you can easily clone it or copy it. However, I r
 **Installing as a module:**
 
 ```
-uv add "ec2-helper @ git+https://github.com/varunneal/ec2-helper@main"
+uv add git+https://github.com/varunneal/ec2-helper@main"
 ```
 
 **Running it as a script:**
@@ -76,13 +76,10 @@ Basic CLI examples
 ```
 
 
-More info
----------
-- **Instance Management**: Create, find, or reuse EC2 instances with smart tagging
+Basic Features
+--------------
 - **AMI Options**: Standard Amazon Linux 2023, GPU-optimized (NVIDIA), or Deep Learning AMIs
 - **Volume Management**: Automatic EBS volume resizing with filesystem extension
-- **Remote Execution**: Run commands via AWS SSM (no SSH required)
-- **File Transfer**: Upload/download files using S3 as intermediary (cba to handle ssh keys)
+- **No SSH**: Run commands via AWS SSM. Upload/download files using S3 as intermediary (cba to handle ssh keys)
 - **Polling**: Wait for commands to succeed or monitor background processes
-- **Auto-termination**: Uptime-based termination during polling operations prevents runaway costs
 
