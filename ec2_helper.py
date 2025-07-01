@@ -13,6 +13,28 @@
 
 from __future__ import annotations
 
+# Public API - only these functions are exposed when importing this module
+__all__ = [
+    # Core instance management
+    "spin_up_instance",
+    "spin_up_or_find", 
+    "find_instance",
+    "terminate_instance",
+    
+    # Instance configuration
+    "setup_instance",
+    "check_instance_uptime",
+    
+    # Remote execution
+    "run_command",
+    "poll_until_command_succeeds",
+    "launch_background_process",
+    "poll_background_process",
+    
+    # File transfer
+    "upload_file",
+    "download_file",
+]
 
 import io
 import json
@@ -606,6 +628,24 @@ def download_file(
     print(f"- Download complete: {remote_path} -> {local_path}")
 
 
+def terminate_instance(instance_id: str, region: Optional[str] = None):
+    """Terminate the specified EC2 instance."""
+    sess = _session(region)
+    print(f"[red]Terminating[/] {instance_id}")
+    sess.client("ec2").terminate_instances(InstanceIds=[instance_id])
+
+
+def find_instance(tag: str, region: Optional[str] = None):
+    """Find and return instance info by tag, or None if not found."""
+    inst = _find_instance(_session(region), tag)
+    if inst:
+        print(f"[bold cyan]{inst.id}[/] ({inst.instance_type} @ {inst.public_dns_name})")
+        return inst
+    else:
+        print("[red]No matching instance[/]")
+        return None
+
+
 # -----------------------------------------------------
 #  Typer CLI
 # -----------------------------------------------------
@@ -613,7 +653,7 @@ app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
 
 @app.command("spin-up")
-def cli_spin_up(
+def spin_up_command(
     instance_type: str = typer.Option(..., help="e.g. g4dn.xlarge"),
     tag: str = typer.Option(..., help="Unique tag value to identify the box"),
     gpu: bool = typer.Option(False, help="Use GPU-optimized AMI with NVIDIA drivers"),
@@ -622,25 +662,20 @@ def cli_spin_up(
     region: str = typer.Option(None, help="AWS region (default us-east-1)"),
 ):
     """Create a new EC2 instance."""
-    instance, was_created = spin_up_instance(instance_type, tag, region, key_name=None, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
-    print(f"- Instance created: {was_created}")
+    spin_up_instance(instance_type, tag, region, key_name=None, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
 
 
 @app.command("find")
-def cli_find(
+def find_command(
     tag: str = typer.Option(..., help="Tag value used when you spun it up"),
     region: str = typer.Option(None, help="AWS region"),
 ):
     """Print the instance ID if found."""
-    inst = _find_instance(_session(region), tag)
-    if inst:
-        print(f"[bold cyan]{inst.id}[/] ({inst.instance_type} @ {inst.public_dns_name})")
-    else:
-        print("[red]No matching instance[/]")
+    find_instance(tag, region)
 
 
 @app.command("spin-up-or-find")
-def cli_spinup_or_find(
+def spin_up_or_find_command(
     instance_type: str = typer.Option(..., help="Desired instance type"),
     tag: str = typer.Option(..., help="Tag value to search / create"),
     gpu: bool = typer.Option(False, help="Use GPU-optimized AMI with NVIDIA drivers"),
@@ -649,12 +684,11 @@ def cli_spinup_or_find(
     region: str = typer.Option(None, help="AWS region"),
 ):
     """Reuse a running instance or create one."""
-    instance, was_created = spin_up_or_find(instance_type, tag, region, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
-    print(f"- Instance created: {was_created}")
+    spin_up_or_find(instance_type, tag, region, gpu=gpu, dlami=dlami, auto_terminate_hours=auto_terminate_hours)
 
 
 @app.command("setup")
-def cli_setup(
+def setup_command(
     instance_id: str = typer.Option(..., help="Instance to configure"),
     volume_size: int = typer.Option(32, help="EBS volume size in GB (default: 32)"),
     region: str = typer.Option(None, help="AWS region"),
@@ -664,7 +698,7 @@ def cli_setup(
 
 
 @app.command("run")
-def cli_run(
+def run_command_cli(
     instance_id: str = typer.Option(..., help="Target instance"),
     region: str = typer.Option(None, help="AWS region"),
     bash: List[str] = typer.Argument(..., help='Command to run, e.g. -- bash "ls -la"'),
@@ -674,7 +708,7 @@ def cli_run(
 
 
 @app.command("upload")
-def cli_upload(
+def upload_command(
     instance_id: str = typer.Option(..., help="Target instance"),
     local_file: pathlib.Path = typer.Option(..., exists=True, readable=True, help="Local file to upload"),
     remote_path: str = typer.Option(None, help="Remote path (default: /home/ec2-user/filename)"),
@@ -685,7 +719,7 @@ def cli_upload(
 
 
 @app.command("download")
-def cli_download(
+def download_command(
     instance_id: str = typer.Option(..., help="Target instance"),
     remote_path: str = typer.Option(..., help="Remote file path to download"),
     local_file: pathlib.Path = typer.Option(None, help="Local destination (default: filename)"),
@@ -696,7 +730,7 @@ def cli_download(
 
 
 @app.command("poll")
-def cli_poll(
+def poll_command(
     instance_id: str = typer.Option(..., help="Target instance"),
     command: str = typer.Option(..., help="Command to poll until success"),
     timeout: int = typer.Option(300, help="Timeout in seconds (default: 300)"),
@@ -708,7 +742,7 @@ def cli_poll(
 
 
 @app.command("launch-bg")
-def cli_launch_background(
+def launch_bg_command(
     instance_id: str = typer.Option(..., help="Target instance"),
     command: str = typer.Option(..., help="Command to run in background"),
     log_file: str = typer.Option("/tmp/process.log", help="Log file path"),
@@ -720,7 +754,7 @@ def cli_launch_background(
 
 
 @app.command("poll-bg")
-def cli_poll_background(
+def poll_bg_command(
     instance_id: str = typer.Option(..., help="Target instance"),
     pid: str = typer.Option(..., help="Process ID to monitor"),
     success_condition: str = typer.Option("test -f /tmp/done", help="Success condition command"),
@@ -738,7 +772,7 @@ def cli_poll_background(
 
 
 @app.command("uptime")
-def cli_uptime(
+def uptime_command(
     instance_id: str = typer.Option(..., help="Instance ID to check uptime for"),
     region: str = typer.Option(None, help="AWS region"),
 ):
@@ -758,11 +792,9 @@ def cli_uptime(
 
 
 @app.command("terminate")
-def cli_terminate(instance_id: str, region: str = typer.Option(None)):
+def terminate_command(instance_id: str, region: str = typer.Option(None)):
     """Terminate the instance immediately."""
-    sess = _session(region)
-    print(f"[red]Terminating[/] {instance_id}")
-    sess.client("ec2").terminate_instances(InstanceIds=[instance_id])
+    terminate_instance(instance_id, region)
 
 
 def _main():
