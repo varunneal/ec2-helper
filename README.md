@@ -13,6 +13,7 @@ Prerequisites
 
 Basic CLI examples
 ------------------
+```
 # create or reuse a box (with GPU support)
 ./ec2_helper.py spin-up-or-find --instance-type g4dn.xlarge --tag whisper-gpu --gpu
 
@@ -35,6 +36,7 @@ Basic CLI examples
 # launch background process and monitor
 ./ec2_helper.py launch-bg --instance-id i-0abc123 --command "python train.py"
 ./ec2_helper.py poll-bg --instance-id i-0abc123 --pid 12345 --success-condition "test -f /tmp/done"
+```
 
 The script:
   • Defaults to us-east-1 unless you pass --region
